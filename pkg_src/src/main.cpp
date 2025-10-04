@@ -804,33 +804,23 @@ int main(int argc, char *argv[])
         log_debug("main() - TCP endpoint: %s at %s:%lu", tcp_cfg.name.c_str(), tcp_cfg.address.c_str(), tcp_cfg.port);
     }
 
-    // Create endpoint instances and run
-    if (mainloop.open() < 0) {
-        goto close_log;
-    }
-
-    // Debug: Final verification before passing to mainloop
-    log_info("main() - Pre-mainloop verification: %zu UART, %zu UDP, %zu TCP endpoints",
-            config.uart_configs.size(), config.udp_configs.size(), config.tcp_configs.size());
-
-    if (!mainloop.add_endpoints(config)) {
-        goto close_log;
-    }
+    // Mainloop initialization and endpoint setup removed - will be done on HTTP start request
+    log_info("main() - Mainloop will be initialized when start is requested via POST /api/threads/mainloop/start");
 
     // Initialize ThreadManager for tracked thread execution
     log_info("main() - Initializing ThreadManager for mavlink router mainloop");
 
     try {
         ThreadMgr::ThreadManager threadManager(10); // Initial capacity of 10 threads
-        
+
         // Initialize ExtensionManager with ThreadManager
         MavlinkExtensions::ExtensionManager extensionManager(threadManager);
-        
+
         // Set extension configuration directory from router config
         if (!config.extension_conf_dir.empty()) {
             extensionManager.setExtensionConfDir(config.extension_conf_dir);
         }
-        
+
         // Set global configuration reference for auto-assignment of extension points
         extensionManager.setGlobalConfig(&config);
 
@@ -870,30 +860,30 @@ int main(int argc, char *argv[])
                     });
 
                 // Add extension management HTTP endpoints
-                
+
                 // POST /api/extensions/add - Add new extension
                 httpServer->addRoute(HttpModule::HttpMethod::POST, "/api/extensions/add",
                     [&extensionManager](const HttpModule::HttpRequest& req) -> HttpModule::HttpResponse {
                         std::cout << "\n[HTTP] Client request: POST /api/extensions/add" << std::endl;
                         std::cout << "[HTTP] Request body: " << req.body << std::endl;
-                        
+
                         HttpModule::HttpResponse resp;
                         resp.contentType = "application/json";
-                        
+
                         try {
                             // Parse extension config from JSON
                             MavlinkExtensions::ExtensionConfig extConfig = extensionManager.parseExtensionConfigFromJson(req.body);
-                            
+
                             // Extension point assignment is now handled automatically by createExtension
                             // if assigned_extension_point is empty
-                            
+
                             // Create the extension
                             std::string result = extensionManager.createExtension(extConfig);
-                            
+
                             if (result == "Success") {
                                 resp.statusCode = 201; // Created
                                 auto info = extensionManager.getExtensionInfo(extConfig.name);
-                                resp.content = "{\"status\":\"success\",\"message\":\"Extension created successfully\",\"extension\":" + 
+                                resp.content = "{\"status\":\"success\",\"message\":\"Extension created successfully\",\"extension\":" +
                                              extensionManager.extensionInfoToJson(info) + "}";
                             } else if (result == "No available extension points") {
                                 resp.statusCode = 503; // Service Unavailable
@@ -907,7 +897,7 @@ int main(int argc, char *argv[])
                             resp.statusCode = 400;
                             resp.content = "{\"error\":\"Invalid request: " + std::string(e.what()) + "\"}";
                         }
-                        
+
                         return resp;
                     });
 
@@ -915,26 +905,26 @@ int main(int argc, char *argv[])
                 httpServer->addRoute(HttpModule::HttpMethod::DELETE, "/api/extensions/delete/:name",
                     [&extensionManager](const HttpModule::HttpRequest& req) -> HttpModule::HttpResponse {
                         std::string extensionName;
-                        
+
                         // Extract name from URL path
                         size_t pos = req.url.find("/api/extensions/delete/");
                         if (pos != std::string::npos) {
                             extensionName = req.url.substr(pos + 24); // Length of "/api/extensions/delete/"
                         }
-                        
+
                         std::cout << "\n[HTTP] Client request: DELETE /api/extensions/delete/" << extensionName << std::endl;
-                        
+
                         HttpModule::HttpResponse resp;
                         resp.contentType = "application/json";
-                        
+
                         if (extensionName.empty()) {
                             resp.statusCode = 400;
                             resp.content = "{\"error\":\"Extension name is required\"}";
                             return resp;
                         }
-                        
+
                         bool success = extensionManager.deleteExtension(extensionName);
-                        
+
                         if (success) {
                             resp.statusCode = 200;
                             resp.content = "{\"status\":\"success\",\"message\":\"Extension deleted successfully\"}";
@@ -942,7 +932,7 @@ int main(int argc, char *argv[])
                             resp.statusCode = 404;
                             resp.content = "{\"error\":\"Extension not found\"}";
                         }
-                        
+
                         return resp;
                     });
 
@@ -950,36 +940,36 @@ int main(int argc, char *argv[])
                 httpServer->addRoute(HttpModule::HttpMethod::POST, "/api/extensions/stop/:name",
                     [&extensionManager](const HttpModule::HttpRequest& req) -> HttpModule::HttpResponse {
                         std::string extensionName;
-                        
+
                         // Extract name from URL path
                         size_t pos = req.url.find("/api/extensions/stop/");
                         if (pos != std::string::npos) {
                             extensionName = req.url.substr(pos + 22); // Length of "/api/extensions/stop/"
                         }
-                        
+
                         std::cout << "\n[HTTP] Client request: POST /api/extensions/stop/" << extensionName << std::endl;
-                        
+
                         HttpModule::HttpResponse resp;
                         resp.contentType = "application/json";
-                        
+
                         if (extensionName.empty()) {
                             resp.statusCode = 400;
                             resp.content = "{\"error\":\"Extension name is required\"}";
                             return resp;
                         }
-                        
+
                         bool success = extensionManager.stopExtension(extensionName);
-                        
+
                         if (success) {
                             resp.statusCode = 200;
                             auto info = extensionManager.getExtensionInfo(extensionName);
-                            resp.content = "{\"status\":\"success\",\"message\":\"Extension stopped\",\"extension\":" + 
+                            resp.content = "{\"status\":\"success\",\"message\":\"Extension stopped\",\"extension\":" +
                                          extensionManager.extensionInfoToJson(info) + "}";
                         } else {
                             resp.statusCode = 404;
                             resp.content = "{\"error\":\"Extension not found\"}";
                         }
-                        
+
                         return resp;
                     });
 
@@ -987,36 +977,36 @@ int main(int argc, char *argv[])
                 httpServer->addRoute(HttpModule::HttpMethod::POST, "/api/extensions/start/:name",
                     [&extensionManager](const HttpModule::HttpRequest& req) -> HttpModule::HttpResponse {
                         std::string extensionName;
-                        
+
                         // Extract name from URL path
                         size_t pos = req.url.find("/api/extensions/start/");
                         if (pos != std::string::npos) {
                             extensionName = req.url.substr(pos + 23); // Length of "/api/extensions/start/"
                         }
-                        
+
                         std::cout << "\n[HTTP] Client request: POST /api/extensions/start/" << extensionName << std::endl;
-                        
+
                         HttpModule::HttpResponse resp;
                         resp.contentType = "application/json";
-                        
+
                         if (extensionName.empty()) {
                             resp.statusCode = 400;
                             resp.content = "{\"error\":\"Extension name is required\"}";
                             return resp;
                         }
-                        
+
                         bool success = extensionManager.startExtension(extensionName);
-                        
+
                         if (success) {
                             resp.statusCode = 200;
                             auto info = extensionManager.getExtensionInfo(extensionName);
-                            resp.content = "{\"status\":\"success\",\"message\":\"Extension started\",\"extension\":" + 
+                            resp.content = "{\"status\":\"success\",\"message\":\"Extension started\",\"extension\":" +
                                          extensionManager.extensionInfoToJson(info) + "}";
                         } else {
                             resp.statusCode = 404;
                             resp.content = "{\"error\":\"Extension not found\"}";
                         }
-                        
+
                         return resp;
                     });
 
@@ -1024,26 +1014,26 @@ int main(int argc, char *argv[])
                 httpServer->addRoute(HttpModule::HttpMethod::GET, "/api/extensions/status/:name",
                     [&extensionManager](const HttpModule::HttpRequest& req) -> HttpModule::HttpResponse {
                         std::string extensionName;
-                        
+
                         // Extract name from URL path
                         size_t pos = req.url.find("/api/extensions/status/");
                         if (pos != std::string::npos) {
                             extensionName = req.url.substr(pos + 24); // Length of "/api/extensions/status/"
                         }
-                        
+
                         std::cout << "\n[HTTP] Client request: GET /api/extensions/status/" << extensionName << std::endl;
-                        
+
                         HttpModule::HttpResponse resp;
                         resp.contentType = "application/json";
-                        
+
                         if (extensionName.empty()) {
                             resp.statusCode = 400;
                             resp.content = "{\"error\":\"Extension name is required\"}";
                             return resp;
                         }
-                        
+
                         auto info = extensionManager.getExtensionInfo(extensionName);
-                        
+
                         if (!info.name.empty()) {
                             resp.statusCode = 200;
                             resp.content = extensionManager.extensionInfoToJson(info);
@@ -1051,20 +1041,20 @@ int main(int argc, char *argv[])
                             resp.statusCode = 404;
                             resp.content = "{\"error\":\"Extension not found\"}";
                         }
-                        
+
                         return resp;
                     });
-                
+
                 // GET /api/extensions/status - Get all extensions status
                 httpServer->addRoute(HttpModule::HttpMethod::GET, "/api/extensions/status",
                     [&extensionManager](const HttpModule::HttpRequest& req) -> HttpModule::HttpResponse {
                         std::cout << "\n[HTTP] Client request: GET /api/extensions/status" << std::endl;
-                        
+
                         HttpModule::HttpResponse resp;
                         resp.contentType = "application/json";
                         resp.statusCode = 200;
                         resp.content = "{\"extensions\":" + extensionManager.allExtensionsToJson() + "}";
-                        
+
                         return resp;
                     });
 
@@ -1072,7 +1062,7 @@ int main(int argc, char *argv[])
                 // Set RPC controller for HTTP server
                 httpServer->setRpcController(rpcController);
                 log_info("main() - RPC controller attached to HTTP server");
-                
+
                 // Set extension manager for HTTP server
                 auto extensionManagerPtr = std::shared_ptr<MavlinkExtensions::ExtensionManager>(&extensionManager, [](MavlinkExtensions::ExtensionManager*){});
                 httpServer->setExtensionManager(extensionManagerPtr);
@@ -1120,89 +1110,63 @@ int main(int argc, char *argv[])
         log_debug("main() - HTTP server support not compiled (build with -D_BUILD_HTTP=ON to enable)");
         #endif
 
-        // Create and register mainloop thread
-        auto mainloopFunc = [&mainloop, &config]() { // Capture config by reference
-            std::cout << "mainloop_thread - Starting MAVLink router mainloop in tracked thread" << std::endl;
-            mainloop.loop();
-        };
-
-        log_info("main() - Creating mainloop thread");
-        unsigned int mainloopThreadId = threadManager.createThread(mainloopFunc);
-        log_info("main() - Mainloop thread created with ID: %u", mainloopThreadId);
-
-        std::string mainloopAttachment = "mainloop_thread";
-
-        // Register with RPC controller (which handles ThreadManager registration internally)
-        log_info("main() - Registering mainloop thread with RPC controller - ID: %u, Attachment: '%s'",
-                 mainloopThreadId, mainloopAttachment.c_str());
-        try {
-            rpcController->registerThread(mainloopAttachment, mainloopThreadId, mainloopAttachment);
-            log_info("main() - Successfully registered mainloop thread with RPC controller");
-        } catch (const std::exception& e) {
-            log_error("main() - Failed to register mainloop thread with RPC controller: %s", e.what());
-            throw;
-        }
-
-        std::cout << "Registered mainloop thread - ID: " << mainloopThreadId
-                  << ", Attachment: " << mainloopAttachment << std::endl;
-
-        // Register restart callback for mainloop
+        // Register restart callback for mainloop (will initialize and start on HTTP request)
+        log_info("main() - Registering mainloop restart callback (mainloop will not start automatically)");
         rpcController->registerRestartCallback("mainloop", [&config, &threadManager, &rpcController, &extensionManager]() -> unsigned int {
             log_info("Restart callback: Creating new mainloop thread");
 
             // Create new mainloop thread
             auto mainloopFunc = [&config]() {
                 try {
-                    log_info("Restarted mainloop_thread - Thread function starting");
+                    log_info("Mainloop_thread - Thread function starting");
 
-                    // Teardown the old mainloop instance to reset its state
-                    log_info("Restarted mainloop_thread - Calling teardown");
+                    // Ensure clean state by tearing down first (safe even if not initialized)
+                    log_info("Mainloop_thread - Ensuring clean state with teardown");
                     Mainloop::teardown();
-                    log_info("Restarted mainloop_thread - Teardown complete");
 
                     // Initialize a fresh mainloop instance
-                    log_info("Restarted mainloop_thread - Calling init");
+                    log_info("Mainloop_thread - Calling init");
                     Mainloop& mainloop = Mainloop::init();
-                    log_info("Restarted mainloop_thread - Init complete, epollfd=%d", mainloop.epollfd);
+                    log_info("Mainloop_thread - Init complete");
 
                     // Open the mainloop (initialize epoll)
-                    log_info("Restarted mainloop_thread - Calling open");
+                    log_info("Mainloop_thread - Calling open");
                     int open_result = mainloop.open();
-                    log_info("Restarted mainloop_thread - Open returned %d, epollfd=%d", open_result, mainloop.epollfd);
+                    log_info("Mainloop_thread - Open returned %d, epollfd=%d", open_result, mainloop.epollfd);
 
                     if (open_result < 0) {
-                        log_error("Failed to open mainloop in restart (error=%d)", open_result);
+                        log_error("Failed to open mainloop (error=%d)", open_result);
                         Mainloop::teardown();
                         return;
                     }
 
                     // Add endpoints from config
-                    log_info("Restarted mainloop_thread - Calling add_endpoints");
+                    log_info("Mainloop_thread - Calling add_endpoints");
                     if (!mainloop.add_endpoints(config)) {
-                        log_error("Failed to add endpoints in restarted mainloop");
+                        log_error("Failed to add endpoints in mainloop");
                         Mainloop::teardown();
                         return;
                     }
-                    log_info("Restarted mainloop_thread - Endpoints added successfully");
+                    log_info("Mainloop_thread - Endpoints added successfully");
 
                     // Start the mainloop
-                    log_info("Restarted mainloop_thread - Entering event loop");
+                    log_info("Mainloop_thread - Entering event loop");
                     int ret = mainloop.loop();
-                    log_info("Restarted mainloop_thread - Exited event loop with return code %d", ret);
+                    log_info("Mainloop_thread - Exited event loop with return code %d", ret);
 
                     // Clean up after loop exits
                     Mainloop::teardown();
                 } catch (const std::exception& e) {
-                    log_error("Exception in restarted mainloop: %s", e.what());
+                    log_error("Exception in mainloop: %s", e.what());
                     Mainloop::teardown();
                 } catch (...) {
-                    log_error("Unknown exception in restarted mainloop");
+                    log_error("Unknown exception in mainloop");
                     Mainloop::teardown();
                 }
             };
 
             unsigned int newThreadId = threadManager.createThread(mainloopFunc);
-            std::string attachment = "mainloop_thread";
+            std::string attachment = "mainloop";
 
             // Register with RPC controller
             rpcController->registerThread(attachment, newThreadId, attachment);
@@ -1213,43 +1177,18 @@ int main(int argc, char *argv[])
 
         std::cout << "Registered mainloop restart callback" << std::endl;
 
-        // Load extension configurations from config directory after mainloop thread is set up
-        log_info("main() - Loading MAVLink extension configurations from: '%s'", config.extension_conf_dir.c_str());
-        if (config.extension_conf_dir.empty()) {
-            // If not specified via CLI or config, use default
-            extensionManager.loadExtensionConfigs(EXTENSION_CONFIG_DIR);
-        } else {
-            extensionManager.loadExtensionConfigs(config.extension_conf_dir);
-        }
+        // Extension loading moved to HTTP start request handler
+        log_info("main() - Extensions will be loaded when mainloop start is requested via POST /api/threads/mainloop/start");
 
 
         log_info("main() - Entering main wait loop - press Ctrl+C or send SIGTERM to exit");
-        // Monitor both threads but don't exit just because mainloop stopped
-        while (true) {
-            // Check if we received a termination signal
-            // The signal handlers will set should_exit in mainloop, but we need
-            // a way to detect if the *entire application* should exit
-            // For now, we'll check if the mainloop is still alive, and if it stopped
-            // naturally (not via RPC stop), we'll exit
+        log_info("main() - Mainloop will only start when requested via POST /api/threads/mainloop/start");
 
-            bool mainloopAlive = threadManager.isThreadAlive(mainloopThreadId);
+        // Monitor HTTP server thread - keep running as long as it's alive
+        while (true) {
             bool httpServerAlive = httpServerThreadId != 0 && threadManager.isThreadAlive(httpServerThreadId);
 
-            // If mainloop stopped and it was due to a signal (not RPC), exit
-            // We can detect this by checking if Mainloop requested exit with a signal
-            if (!mainloopAlive) {
-                // Mainloop has stopped - check if it was a natural termination or RPC stop
-                // For now, just log and keep running to allow HTTP server to continue
-                static bool mainloop_stop_logged = false;
-                if (!mainloop_stop_logged) {
-                    log_info("main() - Mainloop thread has stopped, but HTTP server continues running");
-                    log_info("main() - Send SIGTERM/SIGINT or use RPC to stop all threads");
-                    mainloop_stop_logged = true;
-                    exit(0);
-                }
-            }
-
-            // If HTTP server stopped unexpectedly, that's an error condition
+            // If HTTP server stopped unexpectedly, that's an error condition - exit
             if (httpServerThreadId != 0 && !httpServerAlive) {
                 ThreadMgr::ThreadState state = threadManager.getThreadState(httpServerThreadId);
                 if (state == ThreadMgr::ThreadState::Error) {
@@ -1257,12 +1196,8 @@ int main(int argc, char *argv[])
                     retcode = EXIT_FAILURE;
                     break;
                 }
-            }
-
-            // For now, keep running indefinitely unless both threads are dead
-            // In production, you'd want a proper shutdown mechanism (like a shutdown flag)
-            if (!mainloopAlive && (!httpServerAlive || httpServerThreadId == 0)) {
-                log_info("main() - Both primary threads have stopped, exiting");
+                // HTTP server stopped gracefully (likely due to stop command)
+                log_info("main() - HTTP server stopped, exiting application");
                 retcode = EXIT_SUCCESS;
                 break;
             }
@@ -1271,12 +1206,7 @@ int main(int argc, char *argv[])
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
 
-        // Cleanup - only stop threads that are still running
-        if (mainloopThreadId != 0 && threadManager.isThreadAlive(mainloopThreadId)) {
-            log_info("main() - Stopping mainloop thread %u", mainloopThreadId);
-            threadManager.stopThread(mainloopThreadId);
-            threadManager.joinThread(mainloopThreadId, std::chrono::seconds(5));
-        }
+        // Cleanup - only stop HTTP server if it's still running
 
         if (httpServerThreadId != 0 && threadManager.isThreadAlive(httpServerThreadId)) {
             std::cout << "Stopping HTTP server..." << std::endl;

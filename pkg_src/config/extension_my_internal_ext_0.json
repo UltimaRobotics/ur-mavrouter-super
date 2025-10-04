@@ -3,7 +3,7 @@
   "assigned_extension_point": "internal-router-point-1",
   "extension_thread_config": {
     "general": {
-      "tcp_server_port": 56484
+      "tcp_server_port": 53535
     },
     "udp_endpoints": [
       {

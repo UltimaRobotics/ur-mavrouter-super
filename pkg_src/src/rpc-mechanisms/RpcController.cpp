@@ -147,7 +147,36 @@ RpcResponse RpcController::executeOperationOnThread(const std::string& threadNam
 
     std::lock_guard<std::mutex> lock(registryMutex_);
     auto it = threadRegistry_.find(threadName);
+    
+    // For START operation, check for restart callback even if thread not registered
     if (it == threadRegistry_.end()) {
+        if (operation == ThreadOperation::START) {
+            // Thread not registered - check if we have a restart callback
+            auto callbackIt = restartCallbacks_.find(threadName);
+            if (callbackIt != restartCallbacks_.end()) {
+                log_info("RPC: Thread '%s' not registered, but restart callback exists - creating new thread", 
+                         threadName.c_str());
+                
+                std::function<unsigned int()> restartCallback = callbackIt->second;
+                registryMutex_.unlock();
+                
+                // Create thread using the callback
+                unsigned int newThreadId = restartCallback();
+                
+                response.status = OperationStatus::SUCCESS;
+                response.message = "Thread created successfully with ID: " + std::to_string(newThreadId);
+                
+                // Get thread info
+                std::lock_guard<std::mutex> lock(registryMutex_);
+                ThreadStateInfo info = getThreadStateInfo(threadName);
+                response.threadStates[threadName] = info;
+                
+                log_info("RPC: Thread '%s' created successfully with ID %u", 
+                         threadName.c_str(), newThreadId);
+                return response;
+            }
+        }
+        
         response.status = OperationStatus::THREAD_NOT_FOUND;
         response.message = "Thread not found: " + threadName;
         return response;
@@ -209,18 +238,24 @@ RpcResponse RpcController::executeOperationOnThread(const std::string& threadNam
                                        e.what());
                         }
                         
+                        // Try to unregister from thread manager first (before removing from our registry)
+                        try {
+                            if (!attachmentId.empty()) {
+                                threadManager_.unregisterThread(attachmentId);
+                                log_info("RPC: Successfully unregistered attachment '%s' from thread manager", 
+                                        attachmentId.c_str());
+                            }
+                        } catch (const std::exception& e) {
+                            // Ignore errors - thread may not be registered or already cleaned up
+                            log_info("RPC: Could not unregister attachment '%s': %s (this is normal for dead threads)", 
+                                    attachmentId.c_str(), e.what());
+                        }
+                        
                         // Unregister old thread from our registry
                         {
                             std::lock_guard<std::mutex> lock(registryMutex_);
                             threadRegistry_.erase(threadName);
                             threadAttachments_.erase(threadName);
-                        }
-                        
-                        // Try to unregister from thread manager
-                        try {
-                            threadManager_.unregisterThread(attachmentId);
-                        } catch (...) {
-                            // Ignore errors - thread may not be registered
                         }
                         
                         // Create new thread using the callback
@@ -251,48 +286,51 @@ RpcResponse RpcController::executeOperationOnThread(const std::string& threadNam
                 log_info("RPC: Stopping thread '%s' (ID: %u) via attachment '%s'", 
                          threadName.c_str(), threadId, attachmentId.c_str());
 
-                // Handle mainloop specially - it has its own exit mechanism
+                // Handle mainloop thread - use cooperative stop via ThreadManager
+                // This signals the thread to stop without calling request_exit on the singleton
                 if (threadName == "mainloop") {
-                    log_info("RPC: Requesting mainloop graceful exit");
+                    log_info("RPC: Requesting mainloop thread cooperative stop");
+                    
+                    // Signal the mainloop to exit by calling request_exit on its instance
+                    // The mainloop's loop() function checks _should_exit flag
                     Mainloop::instance().request_exit(0);
-
-                    // Don't wait here - let the main() function handle the join
-                    // Just signal the stop and return success
+                    
+                    // Don't join here - let the thread stop naturally
                     response.status = OperationStatus::SUCCESS;
-                    response.message = "Mainloop stop requested";
-                    log_info("RPC: Mainloop stop requested successfully");
+                    response.message = "Mainloop thread stop requested";
+                    log_info("RPC: Mainloop thread stop requested successfully");
                 } else if (threadName == "ALL") { // Special case for stopping all threads
-                    log_info("RPC: Stopping ALL threads");
+                    log_info("RPC: Stopping ALL threads (mainloop + extensions)");
                     response.status = OperationStatus::SUCCESS;
                     response.message = "All threads stop requested";
                     
-                    // Trigger application shutdown for other threads
-                    // This will eventually stop the http server as well, but gracefully
-                    Mainloop::instance().request_exit(0); 
-
-                    // For other threads, use cooperative stop mechanism
+                    // Stop all threads cooperatively without shutting down the application
                     for (const auto& pair : threadRegistry_) {
-                        if (pair.first != "mainloop") { // Avoid double stopping mainloop
-                            unsigned int currentThreadId = pair.second;
-                            std::string currentAttachmentId;
-                            auto currentAttachIt = threadAttachments_.find(pair.first);
-                            if (currentAttachIt != threadAttachments_.end()) {
-                                currentAttachmentId = currentAttachIt->second;
-                            }
-                            log_info("RPC: Stopping thread '%s' (ID: %u) cooperatively", 
-                                     pair.first.c_str(), currentThreadId);
+                        unsigned int currentThreadId = pair.second;
+                        std::string currentAttachmentId;
+                        auto currentAttachIt = threadAttachments_.find(pair.first);
+                        if (currentAttachIt != threadAttachments_.end()) {
+                            currentAttachmentId = currentAttachIt->second;
+                        }
+                        
+                        log_info("RPC: Stopping thread '%s' (ID: %u) cooperatively", 
+                                 pair.first.c_str(), currentThreadId);
+                        
+                        if (pair.first == "mainloop") {
+                            // For mainloop, call request_exit
+                            Mainloop::instance().request_exit(0);
+                        } else if (pair.first != "http_server") {
+                            // For other non-HTTP threads, use cooperative stop
                             threadManager_.stopThread(currentThreadId);
                         }
+                        // Don't stop http_server when stopping "ALL" - keep it running
                     }
-                    log_info("RPC: All non-mainloop threads stop requested successfully");
-                }
-                 else {
+                    log_info("RPC: All threads (except HTTP server) stop requested successfully");
+                } else {
                     // For other threads, use cooperative stop mechanism
                     log_info("RPC: Stopping thread '%s' cooperatively", threadName.c_str());
                     threadManager_.stopThread(threadId);
 
-                    // Don't join here either - just signal the stop
-                    // The thread will stop on its own and can be joined later if needed
                     response.status = OperationStatus::SUCCESS;
                     response.message = "Thread stop requested";
                     log_info("RPC: Thread '%s' stop requested successfully", threadName.c_str());
@@ -372,11 +410,16 @@ std::vector<std::string> RpcController::getThreadNamesForTarget(ThreadTarget tar
         case ThreadTarget::MAINLOOP:
             if (threadRegistry_.find("mainloop") != threadRegistry_.end()) {
                 names.push_back("mainloop");
+            } else if (restartCallbacks_.find("mainloop") != restartCallbacks_.end()) {
+                // Thread not registered but has restart callback - add it so we can create it
+                names.push_back("mainloop");
             }
             break;
 
         case ThreadTarget::HTTP_SERVER:
             if (threadRegistry_.find("http_server") != threadRegistry_.end()) {
+                names.push_back("http_server");
+            } else if (restartCallbacks_.find("http_server") != restartCallbacks_.end()) {
                 names.push_back("http_server");
             }
             break;
@@ -384,12 +427,20 @@ std::vector<std::string> RpcController::getThreadNamesForTarget(ThreadTarget tar
         case ThreadTarget::STATISTICS:
             if (threadRegistry_.find("statistics") != threadRegistry_.end()) {
                 names.push_back("statistics");
+            } else if (restartCallbacks_.find("statistics") != restartCallbacks_.end()) {
+                names.push_back("statistics");
             }
             break;
 
         case ThreadTarget::ALL:
             for (const auto& pair : threadRegistry_) {
                 names.push_back(pair.first);
+            }
+            // Also add threads that have restart callbacks but aren't registered
+            for (const auto& pair : restartCallbacks_) {
+                if (threadRegistry_.find(pair.first) == threadRegistry_.end()) {
+                    names.push_back(pair.first);
+                }
             }
             break;
     }

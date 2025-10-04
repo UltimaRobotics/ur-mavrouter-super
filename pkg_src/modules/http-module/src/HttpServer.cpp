@@ -10,6 +10,8 @@
 #include <cstring>
 #include <algorithm>
 #include <fstream>
+#include <thread>
+#include <chrono>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include "../../nholmann/json.hpp"
@@ -135,23 +137,76 @@ void HttpServer::setExtensionManager(std::shared_ptr<void> extensionManager) {
         
         // POST /api/threads/:name/start - Start thread
         addRoute(HttpMethod::POST, "/api/threads/mainloop/start", 
-            [controller](const HttpRequest& req) {
+            [controller, this](const HttpRequest& req) {
                 std::cout << "\n[HTTP] ========================================" << std::endl;
                 std::cout << "[HTTP] Client request: POST /api/threads/mainloop/start" << std::endl;
-                std::cout << "[HTTP] Action: START mainloop thread" << std::endl;
+                std::cout << "[HTTP] Action: START mainloop thread AND load/start all extensions" << std::endl;
                 std::cout << "[HTTP] ========================================" << std::endl;
                 
                 HttpResponse resp;
-                auto rpcResp = controller->startThread(RpcMechanisms::ThreadTarget::MAINLOOP);
+                
+                // First, start the mainloop thread (this initializes the global config)
+                auto mainloopResp = controller->startThread(RpcMechanisms::ThreadTarget::MAINLOOP);
+                std::cout << "[HTTP] Mainloop start result: " << mainloopResp.message << std::endl;
+                
+                if (mainloopResp.status != RpcMechanisms::OperationStatus::SUCCESS) {
+                    // If mainloop failed to start, return error
+                    resp.statusCode = 500;
+                    resp.contentType = "application/json";
+                    resp.content = mainloopResp.toJson();
+                    std::cout << "[HTTP] Mainloop start failed, aborting extension loading" << std::endl;
+                    std::cout << "[HTTP] ========================================\n" << std::endl;
+                    return resp;
+                }
+                
+                // Wait a moment for mainloop to initialize
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                
+                // Now load and start extension configurations
+                if (extensionManager_) {
+                    auto* extMgr = static_cast<MavlinkExtensions::ExtensionManager*>(extensionManager_.get());
+                    auto allExtensions = extMgr->getAllExtensions();
+                    
+                    // Only load configs if no extensions are loaded yet
+                    if (allExtensions.empty()) {
+                        std::cout << "[HTTP] Loading extension configurations..." << std::endl;
+                        
+                        std::string extensionConfDir = "config";
+                        extMgr->loadExtensionConfigs(extensionConfDir);
+                        
+                        // Refresh the extensions list
+                        allExtensions = extMgr->getAllExtensions();
+                        std::cout << "[HTTP] Loaded and started " << allExtensions.size() << " extensions from config" << std::endl;
+                    } else {
+                        // Extensions already exist, ensure they're started
+                        std::cout << "[HTTP] Extensions already loaded (" << allExtensions.size() << " found)" << std::endl;
+                        std::cout << "[HTTP] Ensuring all extension threads are running..." << std::endl;
+                        
+                        for (const auto& ext : allExtensions) {
+                            if (!ext.isRunning) {
+                                std::cout << "[HTTP] Starting extension: " << ext.name << std::endl;
+                                bool started = extMgr->startExtension(ext.name);
+                                if (started) {
+                                    std::cout << "[HTTP] Extension '" << ext.name << "' started successfully" << std::endl;
+                                } else {
+                                    std::cout << "[HTTP] Failed to start extension '" << ext.name << "'" << std::endl;
+                                }
+                            } else {
+                                std::cout << "[HTTP] Extension '" << ext.name << "' already running" << std::endl;
+                            }
+                        }
+                    }
+                }
+                
+                // Return combined status
                 resp.statusCode = 200;
                 resp.contentType = "application/json";
-                resp.content = rpcResp.toJson();
+                resp.content = mainloopResp.toJson();
                 
-                std::cout << "[HTTP] Operation result: " << rpcResp.message << std::endl;
-                std::cout << "[HTTP] Operation status: " << static_cast<int>(rpcResp.status) << std::endl;
+                std::cout << "[HTTP] Overall operation status: " << static_cast<int>(mainloopResp.status) << std::endl;
                 
-                if (rpcResp.threadStates.find("mainloop") != rpcResp.threadStates.end()) {
-                    const auto& info = rpcResp.threadStates["mainloop"];
+                if (mainloopResp.threadStates.find("mainloop") != mainloopResp.threadStates.end()) {
+                    const auto& info = mainloopResp.threadStates["mainloop"];
                     std::cout << "[HTTP] NEW STATE for 'mainloop':" << std::endl;
                     std::cout << "[HTTP]   - Thread ID: " << info.threadId << std::endl;
                     std::cout << "[HTTP]   - State: " << static_cast<int>(info.state) << std::endl;
@@ -165,23 +220,49 @@ void HttpServer::setExtensionManager(std::shared_ptr<void> extensionManager) {
         
         // POST /api/threads/:name/stop - Stop thread
         addRoute(HttpMethod::POST, "/api/threads/mainloop/stop", 
-            [controller](const HttpRequest& req) {
+            [controller, this](const HttpRequest& req) {
                 std::cout << "\n[HTTP] ========================================" << std::endl;
                 std::cout << "[HTTP] Client request: POST /api/threads/mainloop/stop" << std::endl;
-                std::cout << "[HTTP] Action: STOP mainloop thread" << std::endl;
+                std::cout << "[HTTP] Action: STOP mainloop thread AND all extensions" << std::endl;
                 std::cout << "[HTTP] ========================================" << std::endl;
                 
                 HttpResponse resp;
-                auto rpcResp = controller->stopThread(RpcMechanisms::ThreadTarget::MAINLOOP);
+                
+                // First stop all extension threads
+                if (extensionManager_) {
+                    auto* extMgr = static_cast<MavlinkExtensions::ExtensionManager*>(extensionManager_.get());
+                    auto allExtensions = extMgr->getAllExtensions();
+                    
+                    std::cout << "[HTTP] Stopping " << allExtensions.size() << " extension threads..." << std::endl;
+                    
+                    for (const auto& ext : allExtensions) {
+                        if (ext.isRunning) {
+                            std::cout << "[HTTP] Stopping extension: " << ext.name << std::endl;
+                            bool stopped = extMgr->stopExtension(ext.name);
+                            if (stopped) {
+                                std::cout << "[HTTP] Extension '" << ext.name << "' stopped successfully" << std::endl;
+                            } else {
+                                std::cout << "[HTTP] Failed to stop extension '" << ext.name << "'" << std::endl;
+                            }
+                        } else {
+                            std::cout << "[HTTP] Extension '" << ext.name << "' already stopped" << std::endl;
+                        }
+                    }
+                }
+                
+                // Then stop the mainloop thread
+                auto mainloopResp = controller->stopThread(RpcMechanisms::ThreadTarget::MAINLOOP);
+                std::cout << "[HTTP] Mainloop stop result: " << mainloopResp.message << std::endl;
+                
+                // Return combined status
                 resp.statusCode = 200;
                 resp.contentType = "application/json";
-                resp.content = rpcResp.toJson();
+                resp.content = mainloopResp.toJson();
                 
-                std::cout << "[HTTP] Operation result: " << rpcResp.message << std::endl;
-                std::cout << "[HTTP] Operation status: " << static_cast<int>(rpcResp.status) << std::endl;
+                std::cout << "[HTTP] Overall operation status: " << static_cast<int>(mainloopResp.status) << std::endl;
                 
-                if (rpcResp.threadStates.find("mainloop") != rpcResp.threadStates.end()) {
-                    const auto& info = rpcResp.threadStates["mainloop"];
+                if (mainloopResp.threadStates.find("mainloop") != mainloopResp.threadStates.end()) {
+                    const auto& info = mainloopResp.threadStates["mainloop"];
                     std::cout << "[HTTP] NEW STATE for 'mainloop':" << std::endl;
                     std::cout << "[HTTP]   - Thread ID: " << info.threadId << std::endl;
                     std::cout << "[HTTP]   - State: " << static_cast<int>(info.state) << std::endl;
@@ -253,37 +334,6 @@ void HttpServer::setExtensionManager(std::shared_ptr<void> extensionManager) {
                 return resp;
             });
         
-        // POST /api/threads/all/stop - Stop all threads
-        addRoute(HttpMethod::POST, "/api/threads/all/stop", 
-            [controller](const HttpRequest& req) {
-                std::cout << "\n[HTTP] ========================================" << std::endl;
-                std::cout << "[HTTP] Client request: POST /api/threads/all/stop" << std::endl;
-                std::cout << "[HTTP] Action: STOP ALL THREADS" << std::endl;
-                std::cout << "[HTTP] ========================================" << std::endl;
-                
-                HttpResponse resp;
-                auto rpcResp = controller->stopThread(RpcMechanisms::ThreadTarget::ALL);
-                resp.statusCode = 200;
-                resp.contentType = "application/json";
-                resp.content = rpcResp.toJson();
-                
-                std::cout << "[HTTP] Operation result: " << rpcResp.message << std::endl;
-                std::cout << "[HTTP] Operation status: " << static_cast<int>(rpcResp.status) << std::endl;
-                std::cout << "[HTTP] NEW STATES for all threads:" << std::endl;
-                
-                for (const auto& pair : rpcResp.threadStates) {
-                    const auto& info = pair.second;
-                    std::cout << "[HTTP]   Thread '" << pair.first << "':" << std::endl;
-                    std::cout << "[HTTP]     - Thread ID: " << info.threadId << std::endl;
-                    std::cout << "[HTTP]     - State: " << static_cast<int>(info.state) << std::endl;
-                    std::cout << "[HTTP]     - Alive: " << (info.isAlive ? "YES" : "NO") << std::endl;
-                    std::cout << "[HTTP]     - Attachment: " << info.attachmentId << std::endl;
-                }
-                std::cout << "[HTTP] ========================================\n" << std::endl;
-                
-                return resp;
-            });
-
         // Extension Management Endpoints
         
         // Helper function to extract extension name from URL
