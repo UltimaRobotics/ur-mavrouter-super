@@ -1,0 +1,2 @@
+/usr/bin/ar qc libthreadmanager_cpp.a CMakeFiles/threadmanager_cpp.dir/src/ThreadManager.cpp.o
+/usr/bin/ranlib libthreadmanager_cpp.a

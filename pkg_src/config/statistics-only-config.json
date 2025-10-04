@@ -1,0 +1,20 @@
+
+{
+  "statistics": {
+    "enable_connection_health": false,
+    "enable_message_stats": false,
+    "enable_performance_metrics": false,
+    "enable_filtering_stats": false,
+    "enable_resource_stats": false,
+    "enable_uart_stats": false,
+    "enable_udp_stats": false,
+    "enable_tcp_stats": false,
+    "periodic_collection_interval_ms": 1000,
+    "error_cleanup_interval_ms": 60000,
+    "statistics_report_interval_ms": 30000,
+    "resource_check_interval_ms": 10000,
+    "enable_json_file_output": false,
+    "json_output_file_path": "data/mavlink-router-stats.json",
+    "json_file_write_interval_ms": 5000
+  }
+}

@@ -1,0 +1,90 @@
+
+{
+  "general": {
+    "tcp_server_port": 5760,
+    "report_stats": false,
+    "debug_log_level": "info",
+    "deduplication_period": 100,
+    "sniffer_sysid": 0,
+    "extension_conf_dir": "config"
+  },
+  "uart_endpoints": [
+    {
+      "name": "flight_controller",
+      "device": "/dev/ttyACM0",
+      "baud": [1500000],
+      "flow_control": false
+    }
+  ],
+  "udp_endpoints": [
+    {
+      "name": "internal-router-point-1",
+      "address": "127.0.0.1",
+      "port": 43001,
+      "mode": "client"
+    },
+    {
+      "name": "internal-router-point-2",
+      "address": "127.0.0.1",
+      "port": 43002,
+      "mode": "client"
+    },
+    {
+      "name": "internal-router-point-3",
+      "address": "127.0.0.1",
+      "port": 43003,
+      "mode": "client"
+    },
+    {
+      "name": "udp-extension-point-1",
+      "address": "127.0.0.1",
+      "port": 44001,
+      "mode": "client"
+    },
+    {
+      "name": "udp-extension-point-2",
+      "address": "127.0.0.1",
+      "port": 44002,
+      "mode": "client"
+    },
+    {
+      "name": "udp-extension-point-3",
+      "address": "127.0.0.1",
+      "port": 44003,
+      "mode": "client"
+    },
+    {
+      "name": "udp-extension-point-4",
+      "address": "127.0.0.1",
+      "port": 44004,
+      "mode": "client"
+    },
+    {
+      "name": "udp-extension-point-5",
+      "address": "127.0.0.1",
+      "port": 44005,
+      "mode": "client"
+    }
+  ],
+  "tcp_endpoints": [
+    {
+      "name": "tcp-extension-point-1",
+      "address": "127.0.0.1",
+      "port": 5761,
+      "retry_timeout": 5000
+    },
+    {
+      "name": "tcp-extension-point-2",
+      "address": "127.0.0.1",
+      "port": 5762,
+      "retry_timeout": 5000
+    },
+    {
+      "name": "tcp-extension-point-3",
+      "address": "127.0.0.1",
+      "port": 5763,
+      "retry_timeout": 5000
+    }
+  ]
+}
+

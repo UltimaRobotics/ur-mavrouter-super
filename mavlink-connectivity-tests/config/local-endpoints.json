@@ -1,0 +1,17 @@
+
+{
+  "endpoints": [
+    {
+      "name": "mavrouter_tcp",
+      "type": "udp",
+      "address": "127.0.0.1",
+      "port": 44553,
+      "enabled": true
+    }
+  ],
+  "test_settings": {
+    "status_interval_seconds": 1,
+    "heartbeat_timeout_seconds": 1,
+    "reconnect_delay_seconds": 2
+  }
+}

@@ -1,0 +1,57 @@
+
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Find required dependencies
+find_dependency(Threads)
+
+# Find cJSON
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(CJSON ~/.../runner-port/build$ make 
+[  7%] Building CXX object CMakeFiles/mavrouter_runner.dir/src/core/port_allocator.cpp.o
+/home/runner/workspace/runner-port/src/core/port_allocator.cpp:30:1: error: no declaration matches ‘mavrouter::core::PortAllocator::PortAllocator()’
+   30 | PortAllocator::PortAllocator() : impl_(std::make_unique<Impl>()) {
+      | ^~~~~~~~~~~~~
+In file included from /home/runner/workspace/runner-port/src/core/port_allocator.cpp:1:
+/home/runner/workspace/runner-port/include/core/port_allocator.h:12:7: note: candidates are: ‘mavrouter::core::PortAllocator::PortAllocator(const mavrouter::core::PortAllocator&)’
+   12 | class PortAllocator {
+      |       ^~~~~~~~~~~~~
+/home/runner/workspace/runner-port/include/core/port_allocator.h:14:5: note:                 ‘mavrouter::core::PortAllocator::PortAllocator(uint16_t, uint16_t)’
+   14 |     PortAllocator(uint16_t min_port = 14000, uint16_t max_port = 19999);
+      |     ^~~~~~~~~~~~~
+/home/runner/workspace/runner-port/include/core/port_allocator.h:12:7: note: ‘class mavrouter::core::PortAllocator’ defined here
+   12 | class PortAllocator {
+      |       ^~~~~~~~~~~~~
+/home/runner/workspace/runner-port/src/core/port_allocator.cpp: In member function ‘bool mavrouter::core::PortAllocator::release_port(uint16_t)’:
+/home/runner/workspace/runner-port/src/core/port_allocator.cpp:90:9: error: ‘LOG_WARNING’ was not declared in this scope; did you mean ‘LOG_WARN’?
+   90 |         LOG_WARNING("Port %d was not allocated, cannot release", port);
+      |         ^~~~~~~~~~~
+      |         LOG_WARN
+/home/runner/workspace/runner-port/src/core/port_allocator.cpp: At global scope:
+/home/runner/workspace/runner-port/src/core/port_allocator.cpp:166:54: error: static member function ‘static bool mavrouter::core::PortAllocator::is_port_available(uint16_t)’ declared with type qualifiers
+  166 | bool PortAllocator::is_port_available(uint16_t port) const {
+      |                                                      ^~~~~
+make[2]: *** [CMakeFiles/mavrouter_runner.dir/build.make:107: CMakeFiles/mavrouter_runner.dir/src/core/port_allocator.cpp.o] Error 1
+make[1]: *** [CMakeFiles/Makefile2:90: CMakeFiles/mavrouter_runner.dir/all] Error 2
+make: *** [Makefile:136: all] Error 2libcjson QUIET)
+endif()
+
+if(NOT CJSON_FOUND)
+    find_package(cJSON QUIET)
+    if(NOT cJSON_FOUND)
+        message(WARNING "cJSON not found. Please install libcjson-dev or build from source.")
+    endif()
+endif()
+
+# Include targets file
+include("${CMAKE_CURRENT_LIST_DIR}/ThreadManagerTargets.cmake")
+
+# Check that all required components are available
+check_required_components(ThreadManager)
+
+# Set variables for backwards compatibility
+set(ThreadManager_FOUND TRUE)
+set(ThreadManager_INCLUDE_DIRS "${PACKAGE_PREFIX_DIR}/include")
+set(ThreadManager_LIBRARIES ThreadManager::ThreadManager)
