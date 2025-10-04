@@ -420,26 +420,87 @@ bool ExtensionManager::deleteExtension(const std::string& name) {
     log_info("Deleting extension '%s' (thread ID: %u, running: %s)", 
              name.c_str(), it->second.threadId, it->second.isRunning ? "yes" : "no");
     
-    // Stop the extension thread if running
+    // STEP 1: Stop the extension thread gracefully if running
+    // Use the same graceful shutdown mechanism as stopExtension()
     if (it->second.isRunning) {
         try {
-            log_info("Stopping thread %u for extension '%s'", it->second.threadId, name.c_str());
-            threadManager_.stopThread(it->second.threadId);
+            unsigned int threadId = it->second.threadId;
+            std::string attachmentId = "extension_" + name;
             
-            log_info("Joining thread %u (waiting up to 5 seconds)", it->second.threadId);
-            bool joined = threadManager_.joinThread(it->second.threadId, std::chrono::seconds(5));
+            // Wait for the extension's mainloop instance to be initialized
+            Mainloop* extensionMainloop = nullptr;
+            int retries = 0;
+            const int maxRetries = 20; // 20 * 50ms = 1 second max
             
-            if (joined) {
-                log_info("Thread %u joined successfully", it->second.threadId);
-            } else {
-                log_warning("Thread %u did not join within timeout", it->second.threadId);
+            while (!extensionMainloop && retries < maxRetries) {
+                extensionMainloop = it->second.mainloopInstance;
+                if (!extensionMainloop) {
+                    log_debug("Waiting for extension mainloop initialization (attempt %d/%d)", 
+                             retries + 1, maxRetries);
+                    extensionsMutex_.unlock();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    extensionsMutex_.lock();
+                    
+                    // Re-validate extension still exists
+                    it = extensions_.find(name);
+                    if (it == extensions_.end()) {
+                        log_error("Extension '%s' was removed during delete operation", name.c_str());
+                        return false;
+                    }
+                    retries++;
+                }
             }
+            
+            if (!extensionMainloop) {
+                log_error("Extension '%s' mainloop never initialized after %d retries", 
+                         name.c_str(), maxRetries);
+                log_warning("Forcing thread termination via thread manager");
+                
+                try {
+                    threadManager_.stopThread(threadId);
+                    threadManager_.joinThread(threadId, std::chrono::seconds(2));
+                    threadManager_.unregisterThread(attachmentId);
+                } catch (const std::exception& e) {
+                    log_error("Force termination failed: %s", e.what());
+                }
+            } else {
+                // Signal graceful exit on the SPECIFIC extension mainloop instance
+                log_info("Signaling graceful exit for extension '%s' mainloop at %p", 
+                         name.c_str(), extensionMainloop);
+                
+                // Call request_exit(0) on THIS SPECIFIC instance
+                extensionMainloop->request_exit(0);
+                
+                log_info("Exit signal sent to extension mainloop, waiting for thread to terminate");
+                
+                // Wait for the thread to exit gracefully
+                bool exitedCleanly = threadManager_.joinThread(threadId, std::chrono::seconds(5));
+                
+                if (exitedCleanly) {
+                    log_info("Extension '%s' thread exited gracefully", name.c_str());
+                } else {
+                    log_warning("Extension '%s' thread did not exit within timeout", name.c_str());
+                }
+                
+                // Unregister from thread manager
+                try {
+                    threadManager_.unregisterThread(attachmentId);
+                    log_info("Extension '%s' unregistered from thread manager", name.c_str());
+                } catch (const std::exception& e) {
+                    log_warning("Failed to unregister extension '%s': %s", name.c_str(), e.what());
+                }
+            }
+            
+            // Update extension state
+            it->second.isRunning = false;
+            it->second.mainloopInstance = nullptr;
+            
         } catch (const std::exception& e) {
             log_warning("Error stopping extension '%s': %s", name.c_str(), e.what());
         }
     }
     
-    // Remove config file
+    // STEP 2: Remove config file
     std::string configPath = getConfigFilePath(name);
     log_info("Removing config file: %s", configPath.c_str());
     if (std::remove(configPath.c_str()) == 0) {
@@ -448,9 +509,9 @@ bool ExtensionManager::deleteExtension(const std::string& name) {
         log_warning("Failed to remove config file (may not exist)");
     }
     
-    // Remove from map
+    // STEP 3: Remove from extensions map
     extensions_.erase(it);
-    log_info("Extension '%s' deleted successfully", name.c_str());
+    log_info("Extension '%s' deleted successfully with graceful shutdown", name.c_str());
     return true;
 }
 
